@@ -168,6 +168,9 @@
     padding:8px; 
   } 
 
+  .chart-scroll-controls{ display:flex; gap:8px; align-items:center; margin-top:8px; }
+  .chart-scroll-controls input[type="range"]{ flex:1; }
+
   .info-modal {
     position:fixed;
     left:50%;
@@ -269,6 +272,16 @@
 
       <div class="chart-wrapper">
         <canvas id="hrChart" width="400" height="400" aria-label="Diagrama de Hertzsprung-Russell"></canvas>
+
+        <!-- Barra de desplazamiento para eje X (temperatura)
+             Implementación: slider que desplaza la ventana visible en escala logarítmica.
+        -->
+        <div class="chart-scroll-controls" aria-hidden="false">
+          <small class="muted">Desplazar Temperatura:</small>
+          <input id="xPan" type="range" min="0" max="1000" step="1" value="0" aria-label="Desplazar eje de temperatura">
+          <div id="xPanLabel" class="muted" style="min-width:140px; text-align:right;">—</div>
+        </div>
+
       </div>
 
       <div style="margin-top:14px;">
@@ -294,6 +307,9 @@
 /*
   Simulador de Evolución Estelar — index.html
   Actualizaciones: Escalas del Diagrama H-R corregidas para estrellas muy masivas.
+  Cambios añadidos en esta versión: barra de desplazamiento (slider) para desplazar la ventana visible
+  en el eje X (Temperatura), en escala logarítmica. Se preservó TODO el código original y sólo se
+  añadieron las partes relacionadas con el control de desplazamiento.
 */
 
 /* ------------ Configuración / modelos simplificados ------------ */
@@ -593,22 +609,64 @@ hrChart = new Chart(ctx, {
   }
 });
 
+// ---------------- Nuevo: controles de desplazamiento X (temperatura) ----------------
+const xPan = document.getElementById('xPan');
+const xPanLabel = document.getElementById('xPanLabel');
+const X_PAN_STEPS = 1000;                       // resolución del slider
+let X_WINDOW_FRACTION = 0.65;                  // fracción de la gama logarítmica visible (0..1)
 
-// FUNCIÓN CLAVE: Actualiza los límites de los ejes X y Y.
+function applyXPan(panValue){
+    if (!hrChart || !hrChart._fullXLimits) return;
+    const limits = hrChart._fullXLimits;
+    // trabajamos en escala log para un panning "lineal" en la representación log
+    const logMin = Math.log10(limits.tempMin);
+    const logMax = Math.log10(limits.tempMax);
+    const fullLogRange = logMax - logMin;
+
+    const windowLogWidth = Math.max(1e-6, fullLogRange * X_WINDOW_FRACTION);
+    const maxPan = Math.max(0, fullLogRange - windowLogWidth);
+    const panFrac = Math.min(1, Math.max(0, panValue / X_PAN_STEPS));
+
+    const newLogMin = logMin + panFrac * maxPan;
+    const newLogMax = newLogMin + windowLogWidth;
+
+    const newMin = Math.pow(10, newLogMin);
+    const newMax = Math.pow(10, newLogMax);
+
+    hrChart.options.scales.x.min = newMin;
+    hrChart.options.scales.x.max = newMax;
+    hrChart.update('none');
+
+    if (xPanLabel) {
+      xPanLabel.textContent = `${formatNumber(Math.round(newMin))} — ${formatNumber(Math.round(newMax))} K`;
+    }
+}
+
+xPan.addEventListener('input', (e) => applyXPan(Number(e.target.value)));
+
+// ---------------- FUNCIÓN CLAVE (reemplazamos updateChartScales original para incluir panning) ----------------
 function updateChartScales() {
     if (!hrChart) return;
     const mass = parseFloat(massInput.value);
     const limits = getScaleLimitsForMass(mass);
-    
-    // Actualizar límites del Eje X (Temperatura)
-    hrChart.options.scales.x.min = limits.tempMin;
-    hrChart.options.scales.x.max = limits.tempMax;
-    
+
+    // almacenar límites "completos" para referencia del slider
+    hrChart._fullXLimits = limits;
+
     // Actualizar límites del Eje Y (Luminosidad)
     hrChart.options.scales.y.min = limits.lumMin;
     hrChart.options.scales.y.max = limits.lumMax;
-    
-    hrChart.update('none'); 
+
+    // Si el slider no fue tocado aún, inicializamos su valor a 0 (mostrar lado izquierdo)
+    if (xPan){
+      if (!xPan._initialized){ xPan._initialized = true; xPan.value = 0; }
+      applyXPan(Number(xPan.value));
+    } else {
+      // fallback: mostrar rango completo
+      hrChart.options.scales.x.min = limits.tempMin;
+      hrChart.options.scales.x.max = limits.tempMax;
+      hrChart.update('none');
+    }
 }
 
 /* ---------------- Simulation loop ---------------- */
